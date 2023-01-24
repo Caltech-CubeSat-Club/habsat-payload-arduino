@@ -5,13 +5,11 @@ Adafruit_GPS GPS(&Wire);
 
 RF69 radio = new Module(9, 2, 3);
 int transmissionState = RADIOLIB_ERR_NONE;
-volatile bool transmittedFlag = false;
-volatile bool enableInterrupt = false;
+volatile bool transmittedFlag = true;
+unsigned long lastTransmit = millis();
 void setFlag(void) {
-  if(!enableInterrupt) {
-    return;
-  }
   transmittedFlag = true;
+  lastTransmit = millis();
   radio.standby();
 }
 
@@ -26,23 +24,18 @@ struct SensorData {
   GPSdata gps;
   String temp;
 };
-SensorData sensordata;
+SensorData sensordata = { {0,0,0,0,0}, "?K" };
 
-GPSdata updateGPS() {
+void gpsTick() {
   char c = GPS.read(); // keep reading from the i2c buffer
-  GPSdata data = {0, 0., 0., 0.};
   if (GPS.newNMEAreceived()) {
-    if (!GPS.parse(GPS.lastNMEA())) // this also sets the newNMEAreceived() flag to false
-      return; // we can fail to parse a sentence in which case we should just wait for another
-    
-      data.fixquality = GPS.fixquality;
-      data.latitudeDegrees = GPS.latitudeDegrees;
-      data.longitudeDegrees = GPS.longitudeDegrees;
-      data.altitude = GPS.altitude;
-      data.satellites = GPS.satellites;
-  }
-  if (data.fixquality) {
-    return data
+    if (GPS.parse(GPS.lastNMEA())) { // this also sets the newNMEAreceived() flag to false
+      sensordata.gps.fixquality = GPS.fixquality;
+      sensordata.gps.latitudeDegrees = GPS.latitudeDegrees;
+      sensordata.gps.longitudeDegrees = GPS.longitudeDegrees;
+      sensordata.gps.altitude = GPS.altitude;
+      sensordata.gps.satellites = GPS.satellites;
+    }
   }
 }
 
@@ -72,10 +65,10 @@ void setup() {
 
 void loop() {
   
-
+  gpsTick(); // update the global variables with the sensor data
   
-  if(transmittedFlag) {
-    enableInterrupt = false;
+  // transmit a packet only if we're done with the last one and we've waited 3 seconds
+  if(transmittedFlag and (lastTransmit-millis())>3000) {
     transmittedFlag = false;
     if (transmissionState == RADIOLIB_ERR_NONE) {
       Serial.println(F("transmission finished!"));
@@ -84,15 +77,14 @@ void loop() {
       Serial.println(transmissionState);
     }
     Serial.print(F("[RF69] Sending packet ... "));
-    transmissionState = radio.startTransmit("header" + GPS_data);
-    enableInterrupt = true;
+    transmissionState = radio.startTransmit("header" + sensordata); // this probably won't work -- need to figure out how to turn the sensordata struct into a string
   }
 
+  // old example code on how to transmit raw bytes. not sure how well this works.
   //byte byteArr[] = {0x01, 0x23, 0x45, 0x67,
     //                0x89, 0xAB, 0xCD, 0xEF,0x01, 0x23, 0x45, 0x67,
       //              0x89, 0xAB, 0xCD, 0xEF,0x01, 0x23, 0x45, 0x67,
         //            0x89, 0xAB, 0xCD, 0xEF,0x01, 0x23, 0x45, 0x67,
           //          0x89, 0xAB, 0xCD, 0xEF};
   //transmissionState = radio.startTransmit(byteArr, 32);
-    delay(3000);
 }
